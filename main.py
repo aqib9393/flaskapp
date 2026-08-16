@@ -6,3 +6,4 @@ print("App is working fine")
 
 st.title("Welcome to Streamlit App")
 st.write("This is a simple Streamlit application running inside a Docker container.")
+st.write("This app working fine")
