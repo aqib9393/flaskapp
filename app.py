@@ -1,9 +1,7 @@
-from fastapi import FastAPI
+import streamlit as st
 
-app = FastAPI()
+st.set_page_config(page_title="Streamlit App", page_icon="🎈")
 
 print("App is working fine")
 
-@app.get("/")
-def read_root():
-    return {"status": "new"}
+st.json({"status": "new"})
