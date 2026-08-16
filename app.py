@@ -1,9 +1,8 @@
-from fastapi import FastAPI
+import streamlit as st
 
-app = FastAPI()
+st.set_page_config(page_title="My App", page_icon="✅")
 
-print("App is working fine")
+st.title("My App")
+st.write("App is working fine")
 
-@app.get("/")
-def read_root():
-    return {"status": "ok"}
+st.success("Status: ok")
