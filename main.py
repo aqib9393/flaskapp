@@ -10,6 +10,7 @@ def health_check():
     return {"status": "ok"}
 
 # To execute Streamlit directly inside an ASGI lifecycle:
+@app.get("/api/streamlit")
 def run_streamlit_app():
     import streamlit.web.cli as stcli
     import sys
