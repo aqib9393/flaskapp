@@ -1,9 +1,20 @@
-import streamlit as st
+import os
+import subprocess
+from fastapi import FastAPI
+from fastapi.middleware.wsgi import WSGIMiddleware
 
-st.set_page_config(page_title="Streamlit App", page_icon="🎈")
+app = FastAPI()
 
-print("App is working fine")
+@app.get("/api/health")
+def health_check():
+    return {"status": "ok"}
 
-st.title("Welcome to Streamlit App")
-st.write("This is a simple Streamlit application running inside a Docker container.")
-st.write("This app working fine")
+# To execute Streamlit directly inside an ASGI lifecycle:
+def run_streamlit_app():
+    import streamlit.web.cli as stcli
+    import sys
+    sys.argv = ["streamlit", "run", "app_ui.py", "--server.port=8501", "--server.address=0.0.0.0"]
+    stcli.main()
+
+if __name__ == "__main__":
+    run_streamlit_app()
