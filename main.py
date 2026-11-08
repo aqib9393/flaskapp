@@ -1,12 +1,32 @@
+import json
+import base64
 import pandas as pd
 import requests
 import streamlit as st
 import utils as u
+from datetime import datetime, time, timezone
+from time import sleep
 
 st.set_page_config(page_title="Admin Portal", page_icon="🔐", layout="wide")
 
 # Base URL for the backend connected to MongoDB
 API_BASE_URL = "http://127.0.0.1:8000"
+
+
+# ----------------- Session Persistence Helpers -----------------
+def encode_session_token(user_data: dict) -> str:
+    """Encodes user session data into a URL-safe string."""
+    raw = json.dumps(user_data)
+    return base64.urlsafe_b64encode(raw.encode()).decode()
+
+
+def decode_session_token(token: str) -> dict | None:
+    """Decodes user session data from URL parameters."""
+    try:
+        raw = base64.urlsafe_b64decode(token.encode()).decode()
+        return json.loads(raw)
+    except Exception:
+        return None
 
 
 # ----------------- HTTP Requests (MongoDB API) -----------------
@@ -39,8 +59,6 @@ def fetch_all_users():
 def create_user_request(user_data):
     """POST request to insert a new document in MongoDB."""
     try:
-        print(f"Creating user with data: {user_data}")
-        print(type(user_data))
         response = requests.post(f"{API_BASE_URL}/api/admin/create_user", json=user_data, timeout=5)
         return response.status_code in [200, 201], response.json().get(
             "message", ""
@@ -51,6 +69,7 @@ def create_user_request(user_data):
 
 def update_user_request(user_id, update_data):
     """PUT request to update an existing user by MongoDB _id."""
+    print(update_data)
     try:
         response = requests.put(
             f"{API_BASE_URL}/api/admin/update_user/{user_id}", json=update_data, timeout=5
@@ -59,13 +78,24 @@ def update_user_request(user_id, update_data):
     except requests.RequestException as e:
         return False, str(e)
 
-# ----------------- Session State -----------------
+
+# ----------------- Session State & Query Param Sync -----------------
 if "authenticated_user" not in st.session_state:
     st.session_state.authenticated_user = None
+
+# Restore session from URL params upon page reload
+if not st.session_state.authenticated_user:
+    session_token = st.query_params.get("session")
+    if session_token:
+        restored_user = decode_session_token(session_token)
+        if restored_user:
+            st.session_state.authenticated_user = restored_user
 
 
 def logout():
     st.session_state.authenticated_user = None
+    if "session" in st.query_params:
+        del st.query_params["session"]
     st.rerun()
 
 
@@ -83,6 +113,8 @@ if not st.session_state.authenticated_user:
                 user = login_request(username, password)
                 if user:
                     st.session_state.authenticated_user = user
+                    # Persist session to URL query parameter so reload preserves it
+                    st.query_params["session"] = encode_session_token(user)
                     st.success("Authentication successful.")
                     st.rerun()
                 else:
@@ -94,7 +126,7 @@ current_user = st.session_state.authenticated_user
 has_write_access = current_user.get("permissions") == "read_write"
 
 with st.sidebar:
-    st.subheader(f"Welcome, {current_user.get('name', '')}")
+    st.subheader(f"Welcome, {current_user.get('name', current_user.get('username', ''))}")
     st.caption(f"Role: **{current_user.get('role', '').upper()}**")
     st.caption(
         f"Access Level: **{'Read & Write' if has_write_access else 'Read Only'}**"
@@ -125,47 +157,53 @@ if has_write_access:
         if not df.empty and "_id" in df.columns:
             user_ids = df["_id"].tolist()
             selected_id = st.selectbox("Select User ID to edit:", user_ids)
-            target = next(u for u in users_data if u["_id"] == selected_id)
-            print(users_data)
+            target = next((u for u in users_data if u["_id"] == selected_id), {})
+            
             with st.form("edit_form"):
-                
-                edit_first_name = st.text_input("Full Name", value = target.get("first_name")+ " "+target.get("last_name"))
+                full_name_val = f"{target.get('first_name') or ''} {target.get('last_name') or ''}".strip()
+                edit_first_name = st.text_input("Full Name", value=full_name_val)
                 edit_email = st.text_input("Email", value=target.get("email", ""))
-                edit_weekly_job_limit = st.number_input("Weekly Job Limit", value=target.get("weekly_job_apply_limit", 0))
-                
+                edit_weekly_job_limit = st.number_input(
+                    "Weekly Job Limit", value=int(target.get("weekly_job_apply_limit", 0))
+                )
+
                 try:
                     edit_expiration = st.date_input(
                         "Account Expiration Date",
                         value=pd.to_datetime(target.get("expiry_date", pd.Timestamp.now())),
                     )
-                except:
+                except Exception:
                     edit_expiration = st.date_input(
                         "Account Expiration Date", value=pd.Timestamp.now()
                     )
-                
+
                 col_save, col_delete = st.columns([1, 1])
-                save_clicked = col_save.form_submit_button(
-                    "Save Changes", type="primary"
-                )
+                save_clicked = col_save.form_submit_button("Save Changes", type="primary")
 
                 if save_clicked:
-                    print(f"Updating user {selected_id} with first name: {edit_first_name}, email: {edit_email}, expiry_date: {edit_expiration}")
-                    success, msg = update_user_request(
-                        selected_id,
-                        {
-                            # u.first_name: edit_first_name,
-                            # u.last_name: edit_last_name,
-                            u.email: edit_email,
-                            u.expiry_date: edit_expiration,
-                        },
-                    )
+                    formatted_expiry = None
+                    if edit_expiration:
+                        if isinstance(edit_expiration, datetime):
+                            formatted_expiry = edit_expiration.astimezone(timezone.utc).isoformat()
+                        else:
+                            # st.date_input returns a datetime.date; set time to end-of-day UTC or start-of-day
+                            combined_dt = datetime.combine(edit_expiration, time.max).replace(tzinfo=timezone.utc)
+                            formatted_expiry = combined_dt.isoformat()
+                    payload = {
+                        u.email: edit_email,
+                        # u.expiry_date: edit_expiration.isoformat() if hasattr(edit_expiration, "isoformat") else str(edit_expiration),
+                        u.expiry_date: formatted_expiry,
+                        u.weekly_job_apply_limit:edit_weekly_job_limit
+
+                    }
+                    success, msg = update_user_request(selected_id, payload)
                     if success:
                         st.success("User updated successfully.")
+                        sleep(1)  # Optional: brief pause before rerun
                         st.rerun()
+
                     else:
                         st.error(f"Failed to update: {msg}")
-
-                
         else:
             st.info("No records found to edit.")
 
@@ -189,11 +227,12 @@ if has_write_access:
                             "password": new_pass,
                             "first_name": new_first_name,
                             "last_name": new_last_name,
-                            "email": new_email
+                            "email": new_email,
                         }
                     )
                     if success:
                         st.success("User created successfully.")
+                        st.rerun()
                     else:
                         st.error(f"Failed to create user: {msg}")
 
