@@ -6,26 +6,30 @@ import streamlit as st
 import utils as u
 from datetime import datetime, time, timezone
 from time import sleep
+from itsdangerous import URLSafeTimedSerializer, SignatureExpired, BadSignature
 
 st.set_page_config(page_title="Admin Portal", page_icon="🔐", layout="wide")
 
 # Base URL for the backend connected to MongoDB
-API_BASE_URL = "http://127.0.0.1:8000"
+API_BASE_URL = "https://databaseapi.muhammad-aqib.com"
 
 
+# Secret key kept on the server (store in .streamlit/secrets.toml)
+SECRET_KEY = st.secrets.get("SESSION_SECRET", "change-this-to-a-secure-random-key")
+# SESSION_MAX_AGE_SECONDS = 60 * 60 * 24  # 24 hours
+SESSION_MAX_AGE_SECONDS = 60 * 5  # 5 minutes
+serializer = URLSafeTimedSerializer(SECRET_KEY)
 # ----------------- Session Persistence Helpers -----------------
 def encode_session_token(user_data: dict) -> str:
-    """Encodes user session data into a URL-safe string."""
-    raw = json.dumps(user_data)
-    return base64.urlsafe_b64encode(raw.encode()).decode()
+    """Signs and encodes user data with an automatic cryptographic timestamp."""
+    return serializer.dumps(user_data)
 
-
-def decode_session_token(token: str) -> dict | None:
-    """Decodes user session data from URL parameters."""
+def decode_session_token(token: str, max_age: int = SESSION_MAX_AGE_SECONDS) -> dict | None:
+    """Decodes token and enforces expiration."""
     try:
-        raw = base64.urlsafe_b64decode(token.encode()).decode()
-        return json.loads(raw)
-    except Exception:
+        # Raises SignatureExpired if token age > max_age
+        return serializer.loads(token, max_age=max_age)
+    except (SignatureExpired, BadSignature):
         return None
 
 
@@ -90,6 +94,10 @@ if not st.session_state.authenticated_user:
         restored_user = decode_session_token(session_token)
         if restored_user:
             st.session_state.authenticated_user = restored_user
+        else:
+            # Token was either tampered with or expired
+            del st.query_params["session"]
+            st.warning("Your session has expired. Please log in again.")
 
 
 def logout():
